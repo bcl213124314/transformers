@@ -853,6 +853,15 @@ class WhisperEncoder(WhisperPreTrainedModel):
 
     def set_input_embeddings(self, value: nn.Module):
         self.conv1 = value
+    
+    @static
+    def sinusoids(length, channels, max_timescale=10000):
+        """Returns sinusoids for positional embedding"""
+        assert channels % 2 == 0
+        log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
+        inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2))
+        scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
+        return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
     def forward(
         self,
@@ -861,6 +870,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
         head_mask=None,
         output_attentions=None,
         output_hidden_states=None,
+        positional_embeddings = None,
         return_dict=None,
     ):
         r"""
@@ -885,6 +895,10 @@ class WhisperEncoder(WhisperPreTrainedModel):
             output_hidden_states (`bool`, *optional*):
                 Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
                 for more detail.
+            encoder_positional_embeddings (`torch.FloatTensor`, *optional*):
+                Tensor of shape (sequence_length, encoder embedding size). This replaces the default positional embeddings
+                of the encoder. This allows the use of shorter sequence length and can increase encoding speed for short 
+                audio segments.
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         """
@@ -897,7 +911,10 @@ class WhisperEncoder(WhisperPreTrainedModel):
         inputs_embeds = nn.functional.gelu(self.conv2(inputs_embeds))
 
         inputs_embeds = inputs_embeds.permute(0, 2, 1)
-        embed_pos = self.embed_positions.weight
+        if positional_embeddings is not None:
+            embed_pos = positional_embeddings
+        else:
+            embed_pos = self.embed_positions.weight
 
         hidden_states = inputs_embeds + embed_pos
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -1307,6 +1324,7 @@ class WhisperModel(WhisperPreTrainedModel):
         decoder_head_mask: Optional[torch.Tensor] = None,
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        encoder_positional_embeddings: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         decoder_inputs_embeds: Optional[Tuple[torch.FloatTensor]] = None,
         use_cache: Optional[bool] = None,
@@ -1348,6 +1366,7 @@ class WhisperModel(WhisperPreTrainedModel):
                 head_mask=head_mask,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
+                positional_embeddings = encoder_positional_embeddings
                 return_dict=return_dict,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
@@ -1438,6 +1457,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         decoder_head_mask: Optional[torch.Tensor] = None,
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        encoder_positional_embeddings : Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         decoder_inputs_embeds: Optional[Tuple[torch.FloatTensor]] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -1488,6 +1508,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
             attention_mask=attention_mask,
             decoder_input_ids=decoder_input_ids,
             encoder_outputs=encoder_outputs,
+            encoder_positional_embeddings = encoder_positional_embeddings,
             decoder_attention_mask=decoder_attention_mask,
             head_mask=head_mask,
             decoder_head_mask=decoder_head_mask,
@@ -1537,6 +1558,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         language=None,
         is_multilingual=None,
         prompt_ids: Optional[torch.Tensor] = None,
+        encoder_positional_embeddings : Optional[torch.FloatTensor] = None,
         return_token_timestamps=None,
         **kwargs,
     ):
@@ -1600,6 +1622,10 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
                 provided as a prompt to each chunk. This can be used to provide or "prompt-engineer" a context for
                 transcription, e.g. custom vocabularies or proper nouns to make it more likely to predict those words
                 correctly. It cannot be used in conjunction with `decoder_start_token_id` as it overwrites this value.
+            encoder_positional_embeddings (`torch.FloatTensor`, *optional*):
+                Tensor of shape (sequence lenght, encoder embedding size). This replaces the default positional embeddings
+                of the encoder. This allows the use of shorter sequence length and can increase encoding speed for short 
+                audio segments.
             return_token_timestamps (`bool`, *optional*):
                 Whether to return token-level timestamps with the text. This can be used with or without the
                 `return_timestamps` option. To get word-level timestamps, use the tokenizer to group the tokens into
@@ -1709,6 +1735,9 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
 
         if forced_decoder_ids is not None:
             generation_config.forced_decoder_ids = forced_decoder_ids
+
+        if encoder_positional_embeddings not None:
+            kwargs["encoder_positional_embeddings"] = encoder_positional_embeddings
 
         if prompt_ids is not None:
             if kwargs.get("decoder_start_token_id") is not None:
