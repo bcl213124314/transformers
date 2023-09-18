@@ -854,7 +854,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
     def set_input_embeddings(self, value: nn.Module):
         self.conv1 = value
     
-    @static
+    @staticmethod
     def sinusoids(length, channels, max_timescale=10000):
         """Returns sinusoids for positional embedding"""
         assert channels % 2 == 0
@@ -870,7 +870,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
         head_mask=None,
         output_attentions=None,
         output_hidden_states=None,
-        positional_embeddings = None,
+        encoder_positional_embeddings = None,
         return_dict=None,
     ):
         r"""
@@ -911,8 +911,8 @@ class WhisperEncoder(WhisperPreTrainedModel):
         inputs_embeds = nn.functional.gelu(self.conv2(inputs_embeds))
 
         inputs_embeds = inputs_embeds.permute(0, 2, 1)
-        if positional_embeddings is not None:
-            embed_pos = positional_embeddings
+        if encoder_positional_embeddings is not None:
+            embed_pos = encoder_positional_embeddings
         else:
             embed_pos = self.embed_positions.weight
 
@@ -1366,7 +1366,7 @@ class WhisperModel(WhisperPreTrainedModel):
                 head_mask=head_mask,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
-                positional_embeddings = encoder_positional_embeddings
+                encoder_positional_embeddings = encoder_positional_embeddings,
                 return_dict=return_dict,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
@@ -1736,7 +1736,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         if forced_decoder_ids is not None:
             generation_config.forced_decoder_ids = forced_decoder_ids
 
-        if encoder_positional_embeddings not None:
+        if encoder_positional_embeddings is not None:
             kwargs["encoder_positional_embeddings"] = encoder_positional_embeddings
 
         if prompt_ids is not None:
